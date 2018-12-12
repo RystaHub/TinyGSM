@@ -54,10 +54,12 @@ namespace {
   template<typename T>
   static void DBG_PLAIN(T last) {
     TINY_GSM_DEBUG.println(last);
+    TINY_GSM_DEBUG.flush();
   }
 
   template<typename T, typename... Args>
   static void DBG_PLAIN(T head, Args... tail) {
+    delay(10);
     TINY_GSM_DEBUG.print(head);
     TINY_GSM_DEBUG.print(' ');
     DBG_PLAIN(tail...);
@@ -65,6 +67,7 @@ namespace {
 
   template<typename... Args>
   static void DBG(Args... args) {
+    delay(10);
     TINY_GSM_DEBUG.print(GF("["));
     TINY_GSM_DEBUG.print(millis());
     TINY_GSM_DEBUG.print(GF("] "));

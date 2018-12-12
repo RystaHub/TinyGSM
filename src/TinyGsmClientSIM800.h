@@ -159,7 +159,7 @@ public:
 public:
 
   TinyGsmSim800(Stream& stream)
-    : stream(stream)
+    : stream(stream), debug(true)
   {
     stream.setTimeout(5000);
     memset(sockets, 0, sizeof(sockets));
@@ -797,6 +797,8 @@ protected:
 
   int16_t modemSend(const void* buff, size_t len, uint8_t mux) {
     sendAT(GF("+CIPSEND="), mux, ',', len);
+    bool tmp = debug;
+    debug = false;
     if (waitResponse(GF(">")) != 1) {
       return 0;
     }
@@ -805,6 +807,7 @@ protected:
     if (waitResponse(GF(GSM_NL "DATA ACCEPT:")) != 1) {
       return 0;
     }
+    debug = tmp;
     stream.readStringUntil(','); // Skip mux
     int read = stream.readStringUntil('\n').toInt();
     DBG(read);
@@ -817,9 +820,12 @@ protected:
 #else
     sendAT(GF("+CIPRXGET=2,"), mux, ',', size);
 #endif
+    bool tmp = debug;
+    debug = false;
     if (waitResponse(GF("+CIPRXGET:")) != 1) {
       return 0;
     }
+    debug = tmp;
     stream.readStringUntil(','); // Skip mode 2/3
     stream.readStringUntil(','); // Skip requested size
     size_t len = stream.readStringUntil(',').toInt();
@@ -843,7 +849,8 @@ protected:
     // sockets[mux]->sock_available = modemGetAvailable(mux);
     sockets[mux]->sock_available = len_confirmed;
     waitResponse();
-    return len_requested;
+    DBG(len);
+    return len;
   }
 
   size_t modemGetAvailable(uint8_t mux) {
@@ -859,6 +866,7 @@ protected:
     if (!result) {
       sockets[mux]->sock_connected = modemGetConnected(mux);
     }
+    DBG(result);
     return result;
   }
 
@@ -887,10 +895,11 @@ TINY_GSM_MODEM_STREAM_UTILITIES()
 
   template<typename... Args>
   void sendAT(Args... cmd) {
+    if (debug)
+      DBG("### AT", cmd...);
     streamWrite("AT", cmd..., GSM_NL);
     stream.flush();
     TINY_GSM_YIELD();
-    //DBG("### AT:", cmd...);
   }
 
   // TODO: Optimize this!
@@ -964,10 +973,13 @@ TINY_GSM_MODEM_STREAM_UTILITIES()
 finish:
     data.trim();
     if (!index) {
+      if (debug)
         DBG("\t### Unhandled: '", data, "'");
       if (data.length()) {
         data = String();
       }
+    } else if (debug) {
+      DBG("\t# Response:'", data, "'");
     }
     //DBG('<', index, '>');
     return index;
@@ -989,6 +1001,7 @@ finish:
 
 public:
   Stream&       stream;
+  bool          debug;
 
 protected:
   GsmClient*    sockets[TINY_GSM_MUX_COUNT];
