@@ -77,7 +77,7 @@ public:
   }
 
 public:
-  virtual int connect(const char *host, uint16_t port) {
+  virtual int connect(const char *host, uint16_t port, uint32_t timeout_s) {
     if (at->modemGetConnected(mux)) {
       stop();
     }
@@ -144,7 +144,7 @@ public:
   {}
 
 public:
-  virtual int connect(const char *host, uint16_t port) {
+  virtual int connect(const char *host, uint16_t port, uint32_t timeout_s) {
     if (at->modemGetConnected(mux)) {
       stop();
     }
@@ -802,56 +802,65 @@ protected:
     return (1 == rsp);
   }
 
-  int16_t modemSend(const void* buff, size_t len, uint8_t mux) {
+  int16_t modemSend(const void *buff, size_t len, uint8_t mux) {
     sendAT(GF("+CIPSEND="), mux, ',', len);
-    if (!waitUntil(GF(">"))) {
+    if (waitResponse(GF(">")) != 1) {
       return 0;
     }
-    stream.write((uint8_t*)buff, len);
+    stream.write((uint8_t *)buff, len);
     stream.flush();
-    if (!waitUntil(GF(GSM_NL "DATA ACCEPT:"))) {
+    if (waitResponse(GF(GSM_NL "DATA ACCEPT:")) != 1) {
       return 0;
     }
-    stream.readStringUntil(','); // Skip mux
-    int read = stream.readStringUntil('\n').toInt();
-    DBG("  >>> ", read);
-    return read;
+    streamSkipUntil(',');   // Skip mux
+    return stream.readStringUntil('\n').toInt();
   }
 
   size_t modemRead(size_t size, uint8_t mux) {
 #ifdef TINY_GSM_USE_HEX
     sendAT(GF("+CIPRXGET=3,"), mux, ',', size);
-#else
-    sendAT(GF("+CIPRXGET=2,"), mux, ',', size);
-#endif
-    if (!waitUntil(GF(GSM_NL "+CIPRXGET:"))) {
+    if (waitResponse(GF("+CIPRXGET:")) != 1) {
       return 0;
     }
-    stream.readStringUntil(','); // Skip mode 2/3
-    stream.readStringUntil(','); // Skip requested size
-    size_t len = stream.readStringUntil(',').toInt();
-    sockets[mux]->sock_available = stream.readStringUntil('\n').toInt();
-
-    for (size_t i=0; i<len; i++) {
+#else
+    sendAT(GF("+CIPRXGET=2,"), mux, ',', size);
+    if (waitResponse(GF("+CIPRXGET:")) != 1) {
+      return 0;
+    }
+#endif
+    streamSkipUntil(',');   // Skip Rx mode 2/normal or 3/HEX
+    streamSkipUntil(',');   // Skip mux
+    size_t len_requested = stream.readStringUntil(',').toInt();
+    //  ^^ Requested number of data bytes (1-1460 bytes)to be read
+    size_t len_confirmed = stream.readStringUntil('\n').toInt();
+    // ^^ Confirmed number of data bytes to be read, which may be less than requested.
+    // 0 indicates that no data can be read.
+    // This is actually be the number of bytes that will be remaining after the read
+    for (size_t i = 0; i < len_requested; i++) {
+      uint32_t startMillis = millis();
 #ifdef TINY_GSM_USE_HEX
-      while (stream.available() < 2 && (millis() - startMillis < sockets[mux]->_timeout)) { TINY_GSM_YIELD(); }
-      char buf[4] = { 0, };
+      while (stream.available() < 2 && (millis() - startMillis < sockets[mux]->_timeout)) {
+        TINY_GSM_YIELD();
+      }
+      char buf[4] = {
+          0,
+      };
       buf[0] = stream.read();
       buf[1] = stream.read();
       char c = strtol(buf, NULL, 16);
 #else
-      while (!stream.available() && (millis() - startMillis < sockets[mux]->_timeout)) { TINY_GSM_YIELD(); }
+      while (!stream.available() && (millis() - startMillis < sockets[mux]->_timeout)) {
+        TINY_GSM_YIELD();
+      }
       char c = stream.read();
 #endif
       sockets[mux]->rx.put(c);
-      sockets[mux]->sock_available--;
     }
     DBG("### READ:", len_requested, "from", mux);
     // sockets[mux]->sock_available = modemGetAvailable(mux);
     sockets[mux]->sock_available = len_confirmed;
     waitResponse();
-    DBG("  >>> ", len);
-    return len;
+    return len_requested;
   }
 
   size_t modemGetAvailable(uint8_t mux) {
@@ -888,20 +897,6 @@ public:
 
 TINY_GSM_MODEM_STREAM_UTILITIES()
 
-  template<typename T, typename... Args>
-  void streamWrite(T head, Args... tail) {
-    stream.print(head);
-    streamWrite(tail...);
-  }
-
-  template<typename... Args>
-  void sendAT(Args... cmd) {
-    DBG("<< AT", cmd...);
-    streamWrite("AT", cmd..., GSM_NL);
-    stream.flush();
-    TINY_GSM_YIELD();
-  }
-
   // TODO: Optimize this!
   uint8_t waitResponse(uint32_t timeout_ms, String& data,
                        GsmConstStr r1=GFP(GSM_OK), GsmConstStr r2=GFP(GSM_ERROR),
@@ -917,7 +912,7 @@ TINY_GSM_MODEM_STREAM_UTILITIES()
     data.reserve(64);
     int index = 0;
     unsigned long startMillis = millis();
-    while (index == 0 && millis() - startMillis < timeout) {
+    while (index == 0 && millis() - startMillis < timeout_ms) {
       TINY_GSM_YIELD();
       while (index == 0 && stream.available() > 0) {
         int a = stream.read();
@@ -966,7 +961,7 @@ TINY_GSM_MODEM_STREAM_UTILITIES()
             DBG("### Closed: ", mux);
         }
       }
-    } while (millis() - startMillis < timeout_ms);
+    }
 finish:
     data.trim();
     if (index == 0) {

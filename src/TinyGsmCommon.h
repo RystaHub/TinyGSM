@@ -137,15 +137,15 @@ IPAddress TinyGsmIpFromString(const String& strIP) {
 static inline
 String TinyGsmDecodeHex7bit(String &instr) {
   String result;
-  byte reminder = 0;
+  char reminder = 0;
   int bitstate = 7;
   for (unsigned i=0; i<instr.length(); i+=2) {
     char buf[4] = { 0, };
     buf[0] = instr[i];
     buf[1] = instr[i+1];
-    byte b = strtol(buf, NULL, 16);
+    char b = strtol(buf, NULL, 16);
 
-    byte bb = b << (7 - bitstate);
+    char bb = b << (7 - bitstate);
     char c = (bb + reminder) & 0x7F;
     result += c;
     reminder = b >> bitstate;
